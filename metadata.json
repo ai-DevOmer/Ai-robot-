@@ -1,0 +1,8 @@
+{
+  "name": "OMAR AI",
+  "description": "A high-performance, Gemini-inspired AI assistant with multi-modal capabilities including text, image analysis, thinking mode, and speech generation.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
