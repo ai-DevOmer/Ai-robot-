@@ -19,34 +19,75 @@ const App: React.FC = () => {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  // Robust persistence with quota management
-  useEffect(() => {
-    const persistSessions = (data: ChatSession[]) => {
+  // Helper function to prune data until it fits in localStorage
+  const saveToStorageResiliently = (data: ChatSession[]) => {
+    let currentData = [...data];
+    let attempts = 0;
+    const MAX_ATTEMPTS = 5;
+
+    while (attempts < MAX_ATTEMPTS) {
       try {
-        localStorage.setItem('omar_ai_sessions', JSON.stringify(data));
+        const serialized = JSON.stringify(currentData);
+        localStorage.setItem('omar_ai_sessions', serialized);
+        return true; // Success
       } catch (e: any) {
-        // Handle QuotaExceededError (and variants across browsers)
+        attempts++;
         if (e.name === 'QuotaExceededError' || e.name === 'NS_ERROR_DOM_QUOTA_REACHED' || e.code === 22) {
-          console.warn("Storage quota exceeded. Purging oldest session to free space...");
-          if (data.length > 1) {
-            // Recursively try to save with one less session
-            const reducedSessions = data.slice(0, -1);
-            // Update state so the UI reflects what's actually stored
-            setSessions(reducedSessions);
-          } else if (data.length === 1 && data[0].messages.length > 5) {
-            // If even 1 session is too big, purge oldest messages in that session
-            const modified = [{ ...data[0], messages: data[0].messages.slice(-5) }];
-            setSessions(modified);
+          console.warn(`Storage quota exceeded (Attempt ${attempts}). Cleaning up...`);
+          
+          if (currentData.length > 1) {
+            // Remove the oldest session entirely
+            currentData = currentData.slice(0, -1);
+          } else if (currentData.length === 1) {
+            const session = currentData[0];
+            // If we only have one session left and it's still too big, 
+            // try stripping attachments from the oldest half of messages
+            if (session.messages.some(m => m.attachments && m.attachments.length > 0)) {
+              currentData = [{
+                ...session,
+                messages: session.messages.map((m, idx) => {
+                  // Strip attachments from older messages
+                  if (idx < session.messages.length - 1) {
+                    return { ...m, attachments: [] };
+                  }
+                  return m;
+                })
+              }];
+            } else if (session.messages.length > 1) {
+              // If no attachments but still too big, keep only the last few messages
+              currentData = [{
+                ...session,
+                messages: session.messages.slice(-3)
+              }];
+            } else {
+              // If even one message is too big (massive video), we have to clear it
+              currentData = [];
+              break;
+            }
           } else {
-            // Critical failure: storage is completely unusable or something else is wrong
-            console.error("Storage is full and cannot be recovered automatically.");
+            break;
           }
+        } else {
+          // Some other error
+          console.error("Unexpected storage error:", e);
+          break;
         }
       }
-    };
+    }
+    
+    // If we exited the loop and still failing, last resort: clear everything
+    try {
+      localStorage.removeItem('omar_ai_sessions');
+    } catch (e) {}
+    return false;
+  };
 
+  useEffect(() => {
     if (sessions.length > 0) {
-      persistSessions(sessions);
+      const success = saveToStorageResiliently(sessions);
+      if (!success) {
+        console.error("Failed to recover storage after multiple attempts.");
+      }
     }
   }, [sessions]);
 
